@@ -197,9 +197,20 @@ class KeyValueResponseCacheStore:
         """
         storage = self._storage
         if isinstance(storage, AsyncEnumerateKeysProtocol):
-            keys = await storage.keys(collection=self._collection)
-            for stored_key in keys:
-                await storage.delete(key=stored_key, collection=self._collection)
+            # Backends cap how many keys a single enumeration returns (10,000 is
+            # the common page size), so one pass can leave the tail of a large
+            # collection behind. Drain page by page until an enumeration yields
+            # nothing new, which also stops us spinning against a backend whose
+            # delete does not actually remove the key.
+            drained: set[str] = set()
+            while True:
+                keys = await storage.keys(collection=self._collection)
+                pending = [key for key in keys if key not in drained]
+                if not pending:
+                    break
+                drained.update(pending)
+                for stored_key in pending:
+                    await storage.delete(key=stored_key, collection=self._collection)
             return
         if isinstance(storage, AsyncDestroyCollectionProtocol):
             await storage.destroy_collection(collection=self._collection)

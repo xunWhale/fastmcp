@@ -161,6 +161,33 @@ class TestClear:
         )
         assert await store.get(key) is not None
 
+    async def test_clear_drains_past_the_page_limit(self):
+        """A collection larger than one enumeration page still clears completely."""
+
+        class _SmallPageStore(MemoryStore):
+            page_size = 3
+
+            async def _get_collection_keys(
+                self, *, collection: str, limit: int | None = None
+            ) -> list[str]:
+                keys = await super()._get_collection_keys(
+                    collection=collection, limit=limit
+                )
+                return keys[: self.page_size]
+
+        store = KeyValueResponseCacheStore(_SmallPageStore())
+        entry = CacheEntry(
+            value=_tools_result(), scope="public", expires_at=time.time() + 60
+        )
+        keys = [_key("p1", params_key=str(i)) for i in range(10)]
+        for key in keys:
+            await store.set(key, entry)
+
+        await store.clear()
+
+        survivors = [key for key in keys if await store.get(key) is not None]
+        assert survivors == [], f"{len(survivors)} of {len(keys)} survived clear()"
+
     async def test_clear_scoped_to_own_collection(self):
         """Two adapters over one backend clear independently."""
         backend = MemoryStore()
